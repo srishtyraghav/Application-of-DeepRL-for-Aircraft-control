@@ -24,6 +24,11 @@ class Aircraft:
         # Visual size parameters
         self.size = 15.0  # Size of the aircraft triangle
         
+        # State tracking variables (used by the Behavior Tree)
+        self.distance_to_waypoint = 0.0
+        self.distance_to_missile = 9999.0  # Initialized to a very safe distance
+
+        
     def accelerate(self):
         """Increase the speed, capped at max_speed."""
         self.speed = min(self.speed + self.acceleration, self.max_speed)

@@ -22,3 +22,9 @@ MISSILE_SPEED = 3.2                  # Slightly faster than aircraft's default s
 MISSILE_COLLISION_RADIUS = 18.0      # How close (in pixels) the missile needs to get to hit the aircraft
 MISSILE_SPAWN_DELAY_SEC = 3.0        # Delay in seconds before a missile spawns
 EXPLOSION_DURATION_FRAMES = 60       # 60 frames = 1 second at 60 FPS
+
+# 5. Waypoint & Behavior Tree constants
+WAYPOINT_RADIUS = 8.0                # Visual radius of the target waypoint circle
+COLOR_WAYPOINT = (34, 197, 94)       # Emerald Green for the target waypoint
+SAFE_DISTANCE = 180.0                # Radius in pixels within which evasion behavior is triggered
+

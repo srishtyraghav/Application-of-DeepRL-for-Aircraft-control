@@ -4,6 +4,8 @@ import pygame
 import config
 from aircraft import Aircraft
 from missile import Missile
+from waypoint import Waypoint
+import behavior_tree
 
 def main():
     # Initialize the Pygame framework
@@ -11,7 +13,7 @@ def main():
 
     # Configure the game window using settings in config.py
     screen = pygame.display.set_mode((config.SCREEN_WIDTH, config.SCREEN_HEIGHT))
-    pygame.display.set_caption("DRL Aircraft Control - Phase 3: Missile Threat")
+    pygame.display.set_caption("DRL Aircraft Control - Phase 4: Behavior Trees")
 
     # Create a clock for 60 FPS
     clock = pygame.time.Clock()
@@ -24,11 +26,24 @@ def main():
         angle=0.0,
     )
 
-    # Create the missile
+    # Create the missile threat
     missile = Missile()
+
+    # Create the navigation waypoint target
+    waypoint = Waypoint()
+
+    # Create the Behavior Tree
+    # Roots a Selector that prioritizes EvadeMissile over NavigateToWaypoint
+    bt = behavior_tree.Selector([
+        behavior_tree.EvadeMissile(),
+        behavior_tree.NavigateToWaypoint()
+    ])
 
     # Timer before a missile appears (used for the initial/regular spawns)
     missile_spawn_timer = 0
+
+    # Score tracker for waypoints reached
+    waypoints_reached_count = 0
 
     # Aircraft lifecycle and state tracking variables
     aircraft_alive = True
@@ -49,24 +64,36 @@ def main():
                 running = False
 
         # -------------------------------------------------
-        # Aircraft Controls & Updates
-        # Only allow control and movement if the aircraft is alive
+        # Aircraft Decision Making & Movement (Autopilot)
+        # Only evaluate decisions and move if aircraft is alive
         # -------------------------------------------------
         if aircraft_alive:
-            keys = pygame.key.get_pressed()
-            if keys[pygame.K_LEFT]:
-                aircraft.turn_left()
-            if keys[pygame.K_RIGHT]:
-                aircraft.turn_right()
-            if keys[pygame.K_UP]:
-                aircraft.accelerate()
-            if keys[pygame.K_DOWN]:
-                aircraft.decelerate()
-
+            # 1. Update distance inputs for the Behavior Tree
+            aircraft.distance_to_waypoint = math.sqrt(
+                (waypoint.x - aircraft.x) ** 2 + (waypoint.y - aircraft.y) ** 2
+            )
+            
+            if missile.active:
+                aircraft.distance_to_missile = math.sqrt(
+                    (missile.x - aircraft.x) ** 2 + (missile.y - aircraft.y) ** 2
+                )
+            else:
+                aircraft.distance_to_missile = 9999.0  # Set to a very safe value
+                
+            # 2. Tick the Behavior Tree (runsSelector, evaluates Evade/Navigate)
+            bt.tick(aircraft, missile, waypoint)
+            
+            # 3. Apply physics movement updates
             aircraft.update()
+            
+            # 4. Check if the aircraft has reached the waypoint target
+            # Safe boundary distance to reach the waypoint (radius + buffer)
+            if aircraft.distance_to_waypoint < (config.WAYPOINT_RADIUS + 12.0):
+                waypoint.respawn()
+                waypoints_reached_count += 1
 
         # -----------------------------
-        # Missile Logic
+        # Missile Lifecycle Logic
         # -----------------------------
         if not missile.active and not missile.exploding:
             # Only tick the spawn timer if we are NOT waiting for the aircraft to respawn
@@ -90,7 +117,7 @@ def main():
                 if distance < config.MISSILE_COLLISION_RADIUS:
                     # 1. Start the explosion sequence
                     missile.explode()
-                    # 2. Mark the aircraft as dead (disables movement/keyboard input)
+                    # 2. Mark the aircraft as dead (disables decisions/movement)
                     aircraft_alive = False
 
         # -----------------------------
@@ -130,6 +157,10 @@ def main():
         # Clear screen with premium Slate Navy background
         screen.fill(config.COLOR_BACKGROUND)
 
+        # Draw the target waypoint
+        if aircraft_alive or (not aircraft_alive and not waiting_for_respawn):
+            waypoint.draw(screen)
+
         # Draw the aircraft ONLY if it is alive, OR during the explosion phase
         if aircraft_alive or (not aircraft_alive and not waiting_for_respawn):
             aircraft.draw(screen)
@@ -155,20 +186,32 @@ def main():
             seconds_left = config.MISSILE_SPAWN_DELAY_SEC - (missile_spawn_timer / 60.0)
             status_text = f"INACTIVE - Spawning in {max(0.0, seconds_left):.1f}s"
 
+        # Read active behavior from Behavior Tree
+        active_bt_state = bt.active_behavior if aircraft_alive else "NONE (AIRCRAFT DEAD)"
+
         dashboard_lines = [
             "Flight Status Dashboard",
             "-------------------------",
-            f"Aircraft Position: X={aircraft.x:.1f}, Y={aircraft.y:.1f}",
-            f"Aircraft Speed   : {aircraft.speed:.2f} px/frame",
-            f"Aircraft Heading : {angle_deg:.1f}°",
-            f"Missile Status   : {status_text}",
-            "Controls         : Arrow Keys",
+            f"Aircraft Position : X={aircraft.x:.1f}, Y={aircraft.y:.1f}",
+            f"Aircraft Speed    : {aircraft.speed:.2f} px/frame",
+            f"Aircraft Heading  : {angle_deg:.1f}°",
+            f"Active Behavior   : {active_bt_state}",
+            f"Missile Status    : {status_text}",
+            f"Waypoints Reached : {waypoints_reached_count}",
+            f"Dist to Waypoint  : {aircraft.distance_to_waypoint:.1f} px",
+            f"Dist to Missile   : {('N/A' if not missile.active else f'{aircraft.distance_to_missile:.1f} px')}",
+            "-------------------------",
+            "State: Autopilot (Behavior Tree)"
         ]
 
         for idx, line in enumerate(dashboard_lines):
-            # Highlight the status in red if the missile is active or respawning
-            if idx == 5 and (missile.active or waiting_for_respawn):
+            # Highlight warning values in red
+            if idx == 5 and "EvadeMissile" in line:
+                text_color = (251, 146, 60) # Warning Orange
+            elif idx == 6 and (missile.active or waiting_for_respawn):
                 text_color = (239, 68, 68)  # Warning Red
+            elif idx == 7:
+                text_color = (34, 197, 94)  # Success Green
             else:
                 text_color = (200, 200, 200) # Soft Gray
 
