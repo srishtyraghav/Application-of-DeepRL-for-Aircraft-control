@@ -1,0 +1,22 @@
+# Dependency list for "Application of Deep Reinforcement Learning for Aircraft Control using Behavior Trees"
+
+# 1. pygame: Used for 2D graphics rendering and simulation window management.
+pygame
+
+# 2. gymnasium: The standard toolkit for developing and comparing reinforcement learning algorithms, providing the custom environment wrapper.
+gymnasium
+
+# 3. stable-baselines3: A set of reliable implementations of reinforcement learning algorithms in PyTorch, specifically providing the PPO (Proximal Policy Optimization) agent.
+stable-baselines3
+
+# 4. torch: The underlying deep learning library used by Stable-Baselines3 to construct and train neural networks.
+torch
+
+# 5. behavior3py: We have vendored the core 'b3' folder inside 'src/b3', so it is already included in our codebase and doesn't need to be installed.
+# No entry needed here.
+
+# 6. numpy: A library for efficient numerical computations, matrix operations, and handling aircraft/missile state vectors.
+numpy
+
+# 7. matplotlib: A plotting library used to visualize metrics like agent rewards, missile distance, and flight trajectories.
+matplotlib
