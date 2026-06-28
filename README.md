@@ -4,6 +4,42 @@ This is a DRDO-inspired academic project focused on building a simplified 2D air
 
 ---
 
+## How to Run the Project
+
+### 1. Open the project folder
+
+```bash
+cd ~/Desktop/"Aircraft Control"
+```
+
+### 2. Activate the virtual environment
+
+```bash
+source venv/bin/activate
+```
+
+You should see:
+
+```text
+(venv)
+```
+
+at the beginning of your terminal prompt.
+
+### 3. Run the aircraft simulation
+
+```bash
+python src/simulation/main.py
+```
+
+### 4. Exit the virtual environment
+
+When you're done, type:
+
+```bash
+deactivate
+```
+
 ## Project Directory Structure
 
 Here is an overview of the directory structure we have created and the purpose of each directory:
