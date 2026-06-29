@@ -5,15 +5,14 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
-# Add the simulation source folder to python's import path
-# This allows us to load config, Aircraft, Missile, and Waypoint directly
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'simulation')))
+# Add the project root directory to Python's search path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-import config
-from aircraft import Aircraft
-from missile import Missile
-from waypoint import Waypoint
-from reward import RewardFunction
+import src.simulation.config as config
+from src.simulation.aircraft import Aircraft
+from src.simulation.missile import Missile
+from src.simulation.waypoint import Waypoint
+from src.rl.reward import RewardFunction
 
 class AircraftEnv(gym.Env):
     """
@@ -30,31 +29,47 @@ class AircraftEnv(gym.Env):
         # Instantiate the modular Reward Function
         self.reward_fn = RewardFunction()
 
-        # 1. Action Space: spaces.Discrete(3)
+        # 1. Action Space: spaces.Discrete(7)
         # 0 -> Turn Left
-        # 1 -> Go Straight (maintain current heading)
-        # 2 -> Turn Right
-        self.action_space = spaces.Discrete(3)
+        # 1 -> Turn Right
+        # 2 -> Accelerate
+        # 3 -> Decelerate
+        # 4 -> Climb
+        # 5 -> Dive
+        # 6 -> Maintain Flight
+        self.action_space = spaces.Discrete(7)
 
-        # 2. Observation Space: spaces.Box (6 continuous values)
-        # [Aircraft X, Aircraft Y, Aircraft Speed, Aircraft Heading, Dist to Waypoint, Dist to Missile]
-        # We specify minimum (low) and maximum (high) limits for each value
+        # 2. Observation Space: spaces.Box (12 continuous values)
+        # All values normalized to be in [-1.0, 1.0] or [0.0, 1.0]
+        # [Norm X, Norm Y, Norm Alt, Norm Heading, Norm Speed, Rel WP X, Rel WP Y, Norm WP Dist, Rel MS X, Rel MS Y, Norm MS Dist, MS Active]
         low_bounds = np.array([
-            0.0,                         # X position min
-            0.0,                         # Y position min
-            config.AIRCRAFT_MIN_SPEED,   # Speed min
-            -math.pi,                    # Heading angle min (-180 degrees in rad)
-            0.0,                         # Dist to waypoint min
-            0.0                          # Dist to missile min
+            0.0,   # X position
+            0.0,   # Y position
+            0.0,   # Altitude
+            -1.0,  # Heading (angle / pi)
+            0.0,   # Speed
+            -1.0,  # Rel Waypoint X
+            -1.0,  # Rel Waypoint Y
+            0.0,   # Waypoint Dist
+            -1.0,  # Rel Missile X
+            -1.0,  # Rel Missile Y
+            0.0,   # Missile Dist
+            0.0    # Missile Active Flag
         ], dtype=np.float32)
 
         high_bounds = np.array([
-            float(config.SCREEN_WIDTH),  # X position max (800)
-            float(config.SCREEN_HEIGHT), # Y position max (600)
-            config.AIRCRAFT_MAX_SPEED,   # Speed max (6.0)
-            math.pi,                     # Heading angle max (+180 degrees in rad)
-            2000.0,                      # Dist to waypoint max (safe upper limit)
-            2000.0                       # Dist to missile max (safe upper limit)
+            1.0,   # X position
+            1.0,   # Y position
+            1.0,   # Altitude
+            1.0,   # Heading (angle / pi)
+            1.0,   # Speed
+            1.0,   # Rel Waypoint X
+            1.0,   # Rel Waypoint Y
+            1.5,   # Waypoint Dist
+            1.5,   # Rel Missile X
+            1.5,   # Rel Missile Y
+            1.5,   # Missile Dist
+            1.0    # Missile Active Flag
         ], dtype=np.float32)
 
         self.observation_space = spaces.Box(low=low_bounds, high=high_bounds, dtype=np.float32)
@@ -73,15 +88,45 @@ class AircraftEnv(gym.Env):
 
     def _get_obs(self):
         """
-        Helper method to compile the environment state into a NumPy array.
+        Helper method to compile the normalized environment state into a NumPy array.
         """
+        # Normalize aircraft state
+        norm_x = self.aircraft.x / float(config.SCREEN_WIDTH)
+        norm_y = self.aircraft.y / float(config.SCREEN_HEIGHT)
+        norm_alt = self.aircraft.altitude / 5000.0  # Max altitude 5000.0m
+        norm_heading = self.aircraft.angle / math.pi
+        norm_speed = self.aircraft.speed / config.AIRCRAFT_MAX_SPEED
+
+        # Waypoint relative positions and distance
+        rel_waypoint_x = (self.waypoint.x - self.aircraft.x) / float(config.SCREEN_WIDTH)
+        rel_waypoint_y = (self.waypoint.y - self.aircraft.y) / float(config.SCREEN_HEIGHT)
+        norm_waypoint_dist = self.aircraft.distance_to_waypoint / 1000.0  # Diagonal is ~1000 pixels
+
+        # Missile relative positions, distance, and status
+        if self.missile.active:
+            rel_missile_x = (self.missile.x - self.aircraft.x) / float(config.SCREEN_WIDTH)
+            rel_missile_y = (self.missile.y - self.aircraft.y) / float(config.SCREEN_HEIGHT)
+            norm_missile_dist = self.aircraft.distance_to_missile / 1000.0
+            missile_active = 1.0
+        else:
+            rel_missile_x = 0.0
+            rel_missile_y = 0.0
+            norm_missile_dist = 1.0
+            missile_active = 0.0
+
         return np.array([
-            float(self.aircraft.x),
-            float(self.aircraft.y),
-            float(self.aircraft.speed),
-            float(self.aircraft.angle),
-            float(self.aircraft.distance_to_waypoint),
-            float(self.aircraft.distance_to_missile)
+            norm_x,
+            norm_y,
+            norm_alt,
+            norm_heading,
+            norm_speed,
+            rel_waypoint_x,
+            rel_waypoint_y,
+            norm_waypoint_dist,
+            rel_missile_x,
+            rel_missile_y,
+            norm_missile_dist,
+            missile_active
         ], dtype=np.float32)
 
     def _get_distance(self, x1, y1, x2, y2):
@@ -104,6 +149,7 @@ class AircraftEnv(gym.Env):
             speed=config.AIRCRAFT_START_SPEED,
             angle=0.0
         )
+        self.aircraft.altitude = 2500.0  # Start at mid-altitude (50% of 5000.0m)
 
         # 2. Recreate Waypoint randomly
         self.waypoint = Waypoint()
@@ -140,14 +186,42 @@ class AircraftEnv(gym.Env):
         # Track position prior to movement to detect coordinate wrapping (boundary crossing)
         prev_x, prev_y = self.aircraft.x, self.aircraft.y
 
-        # 1. Apply action to turn/steer the aircraft
+        # 1. Apply action to turn/steer/accelerate/climb the aircraft
+        # Actions are:
+        # 0 -> Turn Left
+        # 1 -> Turn Right
+        # 2 -> Accelerate
+        # 3 -> Decelerate
+        # 4 -> Climb
+        # 5 -> Dive
+        # 6 -> Maintain Flight
+        #
+        # For the reward function, we map these to the 3 legacy actions:
+        # 0 -> Turn Left, 1 -> Go Straight, 2 -> Turn Right
         if action == 0:    # Turn Left
             self.aircraft.turn_left()
-        elif action == 2:  # Turn Right
+            translated_action = 0
+        elif action == 1:  # Turn Right
             self.aircraft.turn_right()
-        # Action == 1: Do nothing (Go Straight)
+            translated_action = 2
+        elif action == 2:  # Accelerate
+            self.aircraft.accelerate()
+            translated_action = 1
+        elif action == 3:  # Decelerate
+            self.aircraft.decelerate()
+            translated_action = 1
+        elif action == 4:  # Climb
+            self.aircraft.altitude = min(self.aircraft.altitude + 50.0, 5000.0)
+            translated_action = 1
+        elif action == 5:  # Dive
+            self.aircraft.altitude = max(self.aircraft.altitude - 50.0, 0.0)
+            translated_action = 1
+        elif action == 6:  # Maintain Flight
+            translated_action = 1
+        else:
+            translated_action = 1
 
-        # 2. Advance aircraft physics position (can wrap around coordinates inside self.aircraft.update())
+        # 2. Advance aircraft physics position
         self.aircraft.update()
 
         # Check if wrapping occurred (if distance jumped is greater than aircraft's speed)
@@ -191,7 +265,7 @@ class AircraftEnv(gym.Env):
 
         # 5. Compute modular reward function
         reward, reward_breakdown = self.reward_fn.calculate_total_reward(
-            action=action,
+            action=translated_action,
             curr_dist_to_waypoint=curr_dist_to_waypoint,
             prev_dist_to_waypoint=self.previous_distance_to_waypoint,
             waypoint_reached=waypoint_reached,
