@@ -1,0 +1,16 @@
+/Users/srishtysinghraghav/Desktop/Aircraft Control/venv/lib/python3.12/site-packages/pygame/pkgdata.py:25: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import resource_stream, resource_exists
+pygame 2.6.1 (SDL 2.28.4, Python 3.12.3)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+Traceback (most recent call last):
+  File "/Users/srishtysinghraghav/Desktop/Aircraft Control/src/simulation/main.py", line 364, in <module>
+    main()
+  File "/Users/srishtysinghraghav/Desktop/Aircraft Control/src/simulation/main.py", line 336, in main
+    renderer.draw(
+  File "/Users/srishtysinghraghav/Desktop/Aircraft Control/src/rendering/renderer.py", line 327, in draw
+    self.draw_simulation_window(surface, aircraft, missile, waypoint, aircraft_alive, offset_x=250, offset_y=0)
+  File "/Users/srishtysinghraghav/Desktop/Aircraft Control/src/rendering/renderer.py", line 305, in draw_simulation_window
+    self.waypoint_render.draw(surface, waypoint, aircraft, offset_x, offset_y, alive=aircraft_alive)
+  File "/Users/srishtysinghraghav/Desktop/Aircraft Control/src/rendering/waypoint_renderer.py", line 81, in draw
+    pygame.draw.line(surface, (34, 211, 238), (int(sx), int(sy)), (int(ex), int(ey)), 1.5)
+TypeError: 'float' object cannot be interpreted as an integer

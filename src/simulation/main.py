@@ -8,25 +8,26 @@ from missile import Missile
 from waypoint import Waypoint
 import behavior_tree
 
-# Add the src folder and simulation folder to Python's import paths
+# Add the project root and source folders to Python's import paths
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 from rl.reward.reward_function import RewardFunction
-from hud import HUD
+from rendering.renderer import Renderer
 
 def main():
     # Initialize the Pygame framework
     pygame.init()
 
-    # Configure the game window dimensions
-    dashboard_width = 300
-    bottom_bar_height = 50
-    window_width = config.SCREEN_WIDTH + dashboard_width
-    window_height = config.SCREEN_HEIGHT + bottom_bar_height
+    # Configure the game window dimensions for Phase 10 Overhaul
+    # Left Panel: 250px | Sim Screen: 800px | Right HUD Panel: 300px
+    # Total Width: 1350px | Total Height: 650px (Sim Screen: 600px, Bottom Bar: 50px)
+    window_width = 1350
+    window_height = 650
 
     screen = pygame.display.set_mode((window_width, window_height))
-    pygame.display.set_caption("DRL Aircraft Control - Phase 7: Reward Engineering & HUD")
+    pygame.display.set_caption("DRL Aircraft Control - Phase 10: Cockpit Overhaul Demonstration")
 
     # Create a clock for 60 FPS
     clock = pygame.time.Clock()
@@ -52,9 +53,9 @@ def main():
         behavior_tree.NavigateToWaypoint()
     ])
 
-    # Instantiate the modular Reward Function and HUD visualizer
+    # Instantiate the modular Reward Function and the Overhauled Renderer
     reward_fn = RewardFunction()
-    hud = HUD()
+    renderer = Renderer()
 
     # Telemetry and state trackers
     episode_reward = 0.0
@@ -75,11 +76,18 @@ def main():
     respawn_timer = 0
     done = False
 
+    # Phase 10: Cockpit history trackers
+    past_episode_rewards = []
+    episode_success_history = []
+    autopilot_mode = True
+
     # Main game loop
     running = True
     while running:
         # Check for episode truncation (1000 steps reached)
         if steps_count >= 1000:
+            past_episode_rewards.append(episode_reward)
+            episode_success_history.append(1)  # Survival of 1000 steps is success
             done = True
             waiting_for_respawn = True
             respawn_timer = 0
@@ -91,6 +99,18 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_m:  # Toggle Autopilot mode with M key
+                    autopilot_mode = not autopilot_mode
+                elif event.key == pygame.K_r:  # Trigger Reset with R key
+                    steps_count = 1000
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1: # Left click
+                    mouse_pos = pygame.mouse.get_pos()
+                    if renderer.btn_autopilot_rect.collidepoint(mouse_pos):
+                        autopilot_mode = not autopilot_mode
+                    elif renderer.btn_reset_rect.collidepoint(mouse_pos):
+                        steps_count = 1000
 
         # Initialize step metrics
         reward = 0.0
@@ -101,7 +121,7 @@ def main():
         wrapped = False
 
         # -------------------------------------------------
-        # Aircraft Decision Making & Movement (Autopilot)
+        # Aircraft Decision Making & Movement (Autopilot / Manual)
         # Only evaluate decisions and move if aircraft is alive
         # -------------------------------------------------
         if aircraft_alive:
@@ -124,18 +144,42 @@ def main():
             aircraft.distance_to_waypoint = previous_distance_to_waypoint
             aircraft.distance_to_missile = previous_distance_to_missile
                 
-            # 2. Tick the Behavior Tree (runs Selector, evaluates Evade/Navigate)
-            bt.tick(aircraft, missile, waypoint)
-            
-            # 3. Determine the discrete action taken by the Behavior Tree
-            angle_diff = aircraft.angle - prev_angle
-            angle_diff = (angle_diff + math.pi) % (2 * math.pi) - math.pi
-            if angle_diff < -0.001:
-                action = 0  # Turn Left
-            elif angle_diff > 0.001:
-                action = 2  # Turn Right
+            if autopilot_mode:
+                # 2. Tick the Behavior Tree (runs Selector, evaluates Evade/Navigate)
+                bt.tick(aircraft, missile, waypoint)
+                
+                # 3. Determine the discrete action taken by the Behavior Tree
+                angle_diff = aircraft.angle - prev_angle
+                angle_diff = (angle_diff + math.pi) % (2 * math.pi) - math.pi
+                if angle_diff < -0.001:
+                    action = 0  # Turn Left
+                elif angle_diff > 0.001:
+                    action = 2  # Turn Right
+                else:
+                    action = 1  # Go Straight
             else:
-                action = 1  # Go Straight
+                # Manual control input checks
+                keys = pygame.key.get_pressed()
+                action = 1  # Default action
+                
+                if keys[pygame.K_a] or keys[pygame.K_LEFT]:
+                    aircraft.turn_left()
+                    action = 0
+                elif keys[pygame.K_d] or keys[pygame.K_RIGHT]:
+                    aircraft.turn_right()
+                    action = 2
+                    
+                if keys[pygame.K_w] or keys[pygame.K_UP]:
+                    aircraft.accelerate()
+                elif keys[pygame.K_s] or keys[pygame.K_DOWN]:
+                    aircraft.decelerate()
+                    
+                if not hasattr(aircraft, "altitude"):
+                    aircraft.altitude = 2500.0
+                if keys[pygame.K_SPACE]:
+                    aircraft.altitude = min(aircraft.altitude + 50.0, 5000.0)
+                elif keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]:
+                    aircraft.altitude = max(aircraft.altitude - 50.0, 0.0)
             
             # 4. Apply physics movement updates
             aircraft.update()
@@ -190,6 +234,8 @@ def main():
                         aircraft.speed = 0.0  # Reset speed to 0.0 so HUD displays DEAD
                         missile_hit = True
                         done = True
+                        past_episode_rewards.append(episode_reward)
+                        episode_success_history.append(0)  # Missile hit is failure
             else:
                 # During the explosion animation, continue animating the explosion but do not chase
                 if missile.exploding:
@@ -246,6 +292,7 @@ def main():
                     speed=config.AIRCRAFT_START_SPEED,
                     angle=0.0,
                 )
+                aircraft.altitude = 2500.0  # Alt init
                 missile.spawn()
                 
                 # Reset episode telemetry
@@ -257,39 +304,24 @@ def main():
                 waiting_for_respawn = False
                 respawn_timer = 0
                 done = False
+                
+                # Clear visual trails on respawn
+                renderer.trajectories.clear()
 
         # -----------------------------
         # Drawing / Rendering
         # -----------------------------
-        # Clear screen with premium Slate Navy background
-        screen.fill(config.COLOR_BACKGROUND)
-
-        # Draw the target waypoint
-        if aircraft_alive or (not aircraft_alive and not waiting_for_respawn):
-            waypoint.draw(screen)
-
-        # Draw the aircraft ONLY if it is alive
-        if aircraft_alive:
-            aircraft.draw(screen)
-
-        # Draw the missile if it is active or exploding
-        if missile.active or missile.exploding:
-            missile.draw(screen)
-
-        # Read active behavior from Behavior Tree
         active_bt_state = bt.active_behavior if aircraft_alive else "DEAD"
+        if not autopilot_mode and aircraft_alive:
+            # Map action back to labels if in manual mode
+            manual_action_label = {0: "L-Turn", 2: "R-Turn", 1: "Steady"}.get(action, "Steady")
+            active_bt_state = f"MANUAL: {manual_action_label}"
 
-        # Determine the status text of the missile / game state
-        if missile.active:
-            status_text = "ACTIVE - CHASING!"
-        elif missile.exploding:
-            status_text = "EXPLODING - IMPACT!"
-        elif waiting_for_respawn:
-            seconds_left = 3.0 - (respawn_timer / 60.0)
-            status_text = f"RESPAWNING IN {max(0.0, seconds_left):.1f}s"
-        else:
-            seconds_left = config.MISSILE_SPAWN_DELAY_SEC - (missile_spawn_timer / 60.0)
-            status_text = f"INACTIVE (SPAWN IN {max(0.0, seconds_left):.1f}s)"
+        # Calculate running stats
+        avg_reward = sum(past_episode_rewards) / max(1, len(past_episode_rewards))
+        success_rate = sum(episode_success_history) / max(1, len(episode_success_history))
+        if len(episode_success_history) == 0:
+            success_rate = 1.0  # Default to 100% initially
 
         # Prepare summary packet for HUD
         summary_data = {
@@ -300,16 +332,23 @@ def main():
             "done": done
         }
 
-        # Draw the complete HUD dashboard on the screen
-        hud.draw_all(
+        # Draw the complete overhauled visualization dashboard
+        renderer.draw(
             surface=screen,
             aircraft=aircraft,
             missile=missile,
+            waypoint=waypoint,
             active_behavior=active_bt_state,
             current_reward=reward if (aircraft_alive or missile_hit) else 0.0,
             reward_breakdown=reward_breakdown,
             summary_data=summary_data,
-            fps=clock.get_fps()
+            average_reward=avg_reward,
+            success_rate=success_rate,
+            autopilot_mode=autopilot_mode,
+            fps=clock.get_fps(),
+            aircraft_alive=aircraft_alive,
+            ppo_probabilities=None,
+            episode_outcome="FAILED" if (waiting_for_respawn and missile_hit) else ("SUCCESS" if waiting_for_respawn else None)
         )
 
         # Refresh screen

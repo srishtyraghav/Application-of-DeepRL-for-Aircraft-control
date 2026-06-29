@@ -11,6 +11,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".
 
 import gymnasium as gym
 from stable_baselines3 import PPO
+import torch
 
 # Import custom environment, simulator classes, and configs
 from src.rl.aircraft_env import AircraftEnv
@@ -18,7 +19,7 @@ import src.simulation.config as config
 from src.simulation.aircraft import Aircraft
 from src.simulation.missile import Missile
 from src.simulation.waypoint import Waypoint
-from src.simulation.hud import HUD
+from src.rendering.renderer import Renderer
 from src.rl.reward.reward_function import RewardFunction
 
 """
@@ -117,20 +118,21 @@ def evaluate_gui(model_path, num_episodes=5):
     print(f"\n[Evaluation] Starting visual GUI evaluation of model: {model_path}")
     pygame.init()
     
-    dashboard_width = 300
-    bottom_bar_height = 50
-    window_width = config.SCREEN_WIDTH + dashboard_width
-    window_height = config.SCREEN_HEIGHT + bottom_bar_height
+    window_width = 1350
+    window_height = 650
     
     screen = pygame.display.set_mode((window_width, window_height))
-    pygame.display.set_caption("DRL Aircraft Control - Phase 8: PPO Agent Evaluation")
+    pygame.display.set_caption("DRL Aircraft Control - Phase 10: PPO Agent Demonstration")
     
     clock = pygame.time.Clock()
-    hud = HUD()
+    renderer = Renderer()
     reward_fn = RewardFunction()
     
     # Load PPO model
     model = PPO.load(model_path)
+    
+    past_episode_rewards = []
+    episode_success_history = []
     
     for ep in range(1, num_episodes + 1):
         # Create objects for this episode
@@ -144,6 +146,9 @@ def evaluate_gui(model_path, num_episodes=5):
         
         missile = Missile()
         waypoint = Waypoint()
+        
+        # Clear paths
+        renderer.trajectories.clear()
         
         episode_reward = 0.0
         steps_count = 0
@@ -160,7 +165,7 @@ def evaluate_gui(model_path, num_episodes=5):
         done = False
         
         running = True
-        while running and not done:
+        while running:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     pygame.quit()
@@ -190,6 +195,12 @@ def evaluate_gui(model_path, num_episodes=5):
                 
                 # Get normalized observation vector
                 obs = get_normalized_observation(aircraft, missile, waypoint)
+                
+                # Query the trained PPO agent and get its action distribution probabilities
+                obs_tensor = torch.tensor(obs).unsqueeze(0).to(model.device)
+                with torch.no_grad():
+                    distribution = model.policy.get_distribution(obs_tensor)
+                    probs = distribution.distribution.probs.cpu().numpy()[0]
                 
                 # Query the trained PPO agent
                 action, _ = model.predict(obs, deterministic=True)
@@ -263,12 +274,19 @@ def evaluate_gui(model_path, num_episodes=5):
                             aircraft.speed = 0.0
                             missile_hit = True
                             done = True
+                            past_episode_rewards.append(episode_reward)
+                            episode_success_history.append(0)
                 else:
                     if missile.exploding:
                         missile.explosion_timer += 1
                         if missile.explosion_timer >= config.EXPLOSION_DURATION_FRAMES:
                             missile.exploding = False
-                            done = True  # End evaluation episode when explosion ends
+
+            # Transition from explosion to respawn waiting state
+            if not aircraft_alive and not waiting_for_respawn:
+                if not missile.exploding:
+                    waiting_for_respawn = True
+                    respawn_timer = 0
                             
             # Update post-action distance values
             curr_dist_to_waypoint = math.sqrt((waypoint.x - aircraft.x) ** 2 + (waypoint.y - aircraft.y) ** 2)
@@ -298,19 +316,20 @@ def evaluate_gui(model_path, num_episodes=5):
                 episode_reward += reward
                 
             # Truncation check
-            if steps_count >= 1000:
+            if steps_count >= 1000 and not waiting_for_respawn and not done:
+                past_episode_rewards.append(episode_reward)
+                episode_success_history.append(1)
                 done = True
+                aircraft_alive = False
+                waiting_for_respawn = True
+                respawn_timer = 0
                 
-            # Render elements
-            screen.fill(config.COLOR_BACKGROUND)
-            
-            if aircraft_alive or (not aircraft_alive and not waiting_for_respawn):
-                waypoint.draw(screen)
-            if aircraft_alive:
-                aircraft.draw(screen)
-            if missile.active or missile.exploding:
-                missile.draw(screen)
-                
+            # Respawn delay loop to transition to next episode
+            if waiting_for_respawn:
+                respawn_timer += 1
+                if respawn_timer >= 180:  # 3 seconds delay
+                    running = False
+
             active_action_label = {
                 0: "TURN LEFT",
                 1: "TURN RIGHT",
@@ -321,6 +340,11 @@ def evaluate_gui(model_path, num_episodes=5):
                 6: "MAINTAIN FLIGHT"
             }.get(action, "NONE") if aircraft_alive else "DEAD"
             
+            avg_reward = sum(past_episode_rewards) / max(1, len(past_episode_rewards))
+            success_rate = sum(episode_success_history) / max(1, len(episode_success_history))
+            if len(episode_success_history) == 0:
+                success_rate = 1.0
+            
             summary_data = {
                 "current_episode": ep,
                 "steps_count": steps_count,
@@ -329,15 +353,22 @@ def evaluate_gui(model_path, num_episodes=5):
                 "done": done
             }
             
-            hud.draw_all(
+            renderer.draw(
                 surface=screen,
                 aircraft=aircraft,
                 missile=missile,
+                waypoint=waypoint,
                 active_behavior=f"PPO: {active_action_label}",
                 current_reward=reward if (aircraft_alive or missile_hit) else 0.0,
                 reward_breakdown=reward_breakdown,
                 summary_data=summary_data,
-                fps=clock.get_fps()
+                average_reward=avg_reward,
+                success_rate=success_rate,
+                autopilot_mode=True,
+                fps=clock.get_fps(),
+                aircraft_alive=aircraft_alive,
+                ppo_probabilities=probs,
+                episode_outcome="FAILED" if (waiting_for_respawn and missile_hit) else ("SUCCESS" if waiting_for_respawn else None)
             )
             
             pygame.display.flip()
@@ -345,9 +376,6 @@ def evaluate_gui(model_path, num_episodes=5):
             
         print(f"Episode: {ep:02d} | Steps: {steps_count:04d} | Reward: {episode_reward:+.2f} | "
               f"Waypoints Reached: {waypoints_reached_count} | Survived: {aircraft_alive}")
-        
-        # Pause slightly between episodes
-        pygame.time.wait(1000)
         
     pygame.quit()
 

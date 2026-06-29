@@ -1,6 +1,6 @@
 # Application of Deep Reinforcement Learning for Aircraft Control using Behavior Trees
 
-This is a DRDO-inspired academic project focused on building a simplified 2D aircraft simulation in Python. The control architecture combines **Deep Reinforcement Learning (DRL)** for low-level flight control and maneuvers (e.g., evasion, recovery, waypoint tracking) with a **Behavior Tree (BT)** for high-level decision-making and switching states.
+The project integrates a Behavior Tree for high-level decision making with a PPO-based Reinforcement Learning framework for aircraft control. Training and evaluation are currently in progress
 
 ---
 
@@ -85,3 +85,52 @@ Here is why each package listed in `requirements.txt` is required for this proje
 7.  **`matplotlib`**:
     *   *What it is*: A comprehensive library for creating static, animated, and interactive visualizations in Python.
     *   *Why we use it*: After training or during simulation runs, we will use it to plot graphs showing training progress (reward vs. episode) and trajectory paths to analyze how the aircraft avoided the missile.
+
+## Installation
+
+Clone the repository:
+
+```bash
+git clone <repository-url>
+cd Aircraft-Control
+```
+
+Create a virtual environment:
+
+```bash
+python3 -m venv venv
+```
+
+Activate it:
+
+```bash
+source venv/bin/activate
+```
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+## Current Features
+
+- 2D aircraft simulation using Pygame
+- Aircraft movement and flight controls
+- Homing missile threat
+- Behavior Tree based decision making
+- Custom Gymnasium environment
+- Reward engineering for RL training
+- PPO integration using Stable-Baselines3
+- Real-time HUD and simulation visualization
+
+## Tech Stack
+
+- Python 3.11
+- Pygame
+- Gymnasium
+- Stable-Baselines3
+- PyTorch
+- Behavior3Py
+- NumPy
+- Matplotlib
