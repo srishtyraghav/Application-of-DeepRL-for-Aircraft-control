@@ -13,18 +13,22 @@ import config
 from aircraft import Aircraft
 from missile import Missile
 from waypoint import Waypoint
+from reward import RewardFunction
 
 class AircraftEnv(gym.Env):
     """
     Custom Gymnasium Environment wrapping our 2D Aircraft/Missile simulation.
     Designed to train a Reinforcement Learning agent (like PPO) to navigate
-    to waypoints and evade incoming missile threats.
+    to waypoints and evade incoming missile threats using a modular reward function.
     """
     # Define render metadata
     metadata = {"render_modes": ["ansi"]}
 
     def __init__(self):
         super(AircraftEnv, self).__init__()
+
+        # Instantiate the modular Reward Function
+        self.reward_fn = RewardFunction()
 
         # 1. Action Space: spaces.Discrete(3)
         # 0 -> Turn Left
@@ -64,6 +68,8 @@ class AircraftEnv(gym.Env):
         self.missile_spawn_timer = 0
         self.steps_count = 0
         self.previous_distance_to_waypoint = 0.0
+        self.previous_distance_to_missile = 9999.0
+        self.missile_active_steps = 0  # Frame steps the current missile has been chasing
 
     def _get_obs(self):
         """
@@ -108,6 +114,7 @@ class AircraftEnv(gym.Env):
         # 4. Reset counter and timers
         self.missile_spawn_timer = 0
         self.steps_count = 0
+        self.missile_active_steps = 0
 
         # 5. Initialize distances
         initial_waypoint_dist = self._get_distance(self.aircraft.x, self.aircraft.y, self.waypoint.x, self.waypoint.y)
@@ -115,6 +122,7 @@ class AircraftEnv(gym.Env):
         self.aircraft.distance_to_missile = 9999.0  # Set to a safe default since missile is not active
 
         self.previous_distance_to_waypoint = initial_waypoint_dist
+        self.previous_distance_to_missile = 9999.0
 
         # Compile observation
         obs = self._get_obs()
@@ -129,6 +137,9 @@ class AircraftEnv(gym.Env):
         # Increment frame steps counter
         self.steps_count += 1
 
+        # Track position prior to movement to detect coordinate wrapping (boundary crossing)
+        prev_x, prev_y = self.aircraft.x, self.aircraft.y
+
         # 1. Apply action to turn/steer the aircraft
         if action == 0:    # Turn Left
             self.aircraft.turn_left()
@@ -136,18 +147,32 @@ class AircraftEnv(gym.Env):
             self.aircraft.turn_right()
         # Action == 1: Do nothing (Go Straight)
 
-        # 2. Advance aircraft physics position
+        # 2. Advance aircraft physics position (can wrap around coordinates inside self.aircraft.update())
         self.aircraft.update()
 
-        # 3. Manage missile spawn and homing physics
+        # Check if wrapping occurred (if distance jumped is greater than aircraft's speed)
+        wrapped_x = abs(self.aircraft.x - prev_x) > (self.aircraft.speed * 2)
+        wrapped_y = abs(self.aircraft.y - prev_y) > (self.aircraft.speed * 2)
+        wrapped = wrapped_x or wrapped_y
+
+        # 3. Manage missile spawn, tracking, and evasion lifetime
+        missile_evaded = False
         if not self.missile.active and not self.missile.exploding:
             self.missile_spawn_timer += 1
             frames_to_spawn = int(config.MISSILE_SPAWN_DELAY_SEC * 60)
             if self.missile_spawn_timer >= frames_to_spawn:
                 self.missile.spawn()
                 self.missile_spawn_timer = 0
+                self.missile_active_steps = 0
         else:
             self.missile.update(self.aircraft.x, self.aircraft.y)
+            if self.missile.active:
+                self.missile_active_steps += 1
+                # If active for more than 5 seconds (300 frames), the missile is successfully evaded
+                if self.missile_active_steps >= 300:
+                    self.missile.explode()  # Triggers inert explosion state
+                    missile_evaded = True
+                    self.missile_active_steps = 0
 
         # 4. Calculate updated distances
         curr_dist_to_waypoint = self._get_distance(self.aircraft.x, self.aircraft.y, self.waypoint.x, self.waypoint.y)
@@ -159,39 +184,49 @@ class AircraftEnv(gym.Env):
             curr_dist_to_missile = 9999.0
         self.aircraft.distance_to_missile = curr_dist_to_missile
 
-        # 5. Compute Reward function
-        reward = -0.01  # Base step time penalty
+        # Determine events for reward calculation
+        waypoint_reached = curr_dist_to_waypoint < (config.WAYPOINT_RADIUS + 12.0)
+        missile_hit = self.missile.active and (curr_dist_to_missile < config.MISSILE_COLLISION_RADIUS)
+        collision_detected = False  # Placeholder for obstacles, none present in current version
 
-        # Rule A: +1 if the aircraft moves closer to the waypoint
-        if curr_dist_to_waypoint < self.previous_distance_to_waypoint:
-            reward += 1.0
+        # 5. Compute modular reward function
+        reward, reward_breakdown = self.reward_fn.calculate_total_reward(
+            action=action,
+            curr_dist_to_waypoint=curr_dist_to_waypoint,
+            prev_dist_to_waypoint=self.previous_distance_to_waypoint,
+            waypoint_reached=waypoint_reached,
+            curr_dist_to_missile=curr_dist_to_missile,
+            prev_dist_to_missile=self.previous_distance_to_missile,
+            missile_active=self.missile.active,
+            missile_evaded=missile_evaded,
+            collision_detected=collision_detected,
+            wrapped=wrapped,
+            missile_hit=missile_hit
+        )
 
-        # Rule B: Check if waypoint is reached
+        # Set up terminal states
         terminated = False
         truncated = False
-        info = {
-            "waypoint_reached": False,
-            "missile_hit": False
-        }
-
-        # Threshold to reach waypoint (radius + boundary margin)
-        if curr_dist_to_waypoint < (config.WAYPOINT_RADIUS + 12.0):
-            reward += 100.0
+        
+        if waypoint_reached or missile_hit:
             terminated = True
-            info["waypoint_reached"] = True
 
-        # Rule C: Check if missile hits the aircraft
-        if self.missile.active and curr_dist_to_missile < config.MISSILE_COLLISION_RADIUS:
-            reward -= 100.0
-            terminated = True
-            info["missile_hit"] = True
-
-        # Rule D: Step limit truncation (ends episode after 1000 frames)
+        # Step limit truncation (ends episode after 1000 frames)
         if self.steps_count >= 1000:
             truncated = True
 
-        # Save distance for comparison in the next step
+        # Store distance states for comparison in the next step
         self.previous_distance_to_waypoint = curr_dist_to_waypoint
+        self.previous_distance_to_missile = curr_dist_to_missile
+
+        # Compile detailed info dictionary
+        info = {
+            "waypoint_reached": waypoint_reached,
+            "missile_hit": missile_hit,
+            "missile_evaded": missile_evaded,
+            "boundary_wrapped": wrapped,
+            "reward_breakdown": reward_breakdown
+        }
 
         # Compile observation
         obs = self._get_obs()
@@ -215,3 +250,4 @@ class AircraftEnv(gym.Env):
         Clean up resources.
         """
         pass
+
